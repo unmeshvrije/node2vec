@@ -39,6 +39,14 @@ def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
     return batch, labels
 
 
+def generate_random_batch(walks, batch_size):
+    batch = []
+    for in range(batch_size):
+        int index = random.randint(0, len(walks))
+        int walkStart = random.randint(0, len(walks[index]-1))
+        pair = walks[index][walkStart], walks[index][walkStart+1]
+        batch.add(pair)
+
 def parseText(inputfile):
     words = []
     voc = {}
