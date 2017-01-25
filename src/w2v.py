@@ -39,13 +39,27 @@ def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
     return batch, labels
 
 
-def generate_random_batch(walks, batch_size):
-    batch = []
-    for in range(batch_size):
-        int index = random.randint(0, len(walks))
-        int walkStart = random.randint(0, len(walks[index]-1))
-        pair = walks[index][walkStart], walks[index][walkStart+1]
-        batch.add(pair)
+def generate_random_batch(walks, batch_size, skip_window):
+    batch = np.ndarray(shape=(batch_size), dtype=np.int64)
+    labels = np.ndarray(shape=(batch_size, 1), dtype=np.int64)
+    sampleIndex = 0
+    for _ in range(batch_size):
+        index = random.randint(0, len(walks)-1)
+        walkStart = random.randint(0, len(walks[index])-1)
+        span = 2 * skip_window + 1  # [ skip_window target skip_window ]
+        buffer = collections.deque(maxlen=span)
+        for _ in range(span):
+            buffer.append(walks[index][walkStart])
+            walkStart = (walkStart + 1) % len(walks[index])
+        target = skip_window
+        target_to_avoid = [skip_window]
+        while target in target_to_avoid:
+            target = random.randint(0, span - 1)
+        batch[sampleIndex] = buffer[skip_window]
+        labels[sampleIndex, 0] = buffer[target]
+        sampleIndex += 1
+
+    return batch, labels
 
 def parseText(inputfile):
     words = []
@@ -85,9 +99,9 @@ def parseRandomWalks(inputFile):
 
 inputfile = sys.argv[1]  # Some text
 inputdata, voc = parseRandomWalks(inputfile)
-dim = int(sys.argv[2])  # n dimensions
+dim = int(sys.argv[2])  # number of dimensions
 # n = int(sys.argv[3])  # the number of nodes
-n = len(voc) + 1
+n = len(voc) #+ 1
 batch_size = 128
 num_sampled = 10    # Number of negative examples to sample.
 num_skips = 2         # How many times to reuse an input to generate a label.
@@ -113,13 +127,17 @@ with graph.as_default():
     # We use the SGD optimizer.
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=1.0).minimize(loss)
 
+    # Compute the cosine similarity between minibatch examples and all embeddings.
+    norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
+    normalized_embeddings = embeddings / norm
+
     # Step 5: Begin training.
     #num_steps = 100001
-    num_steps = n-1
-    if (n == 1):
+    num_steps = n
+    if (n == 0):
         print ("Empty vocabulary.")
         sys.exit()
-    num_walks_per_node = int( (len(inputdata) / (n-1)) )
+    num_walks_per_node = int( (len(inputdata) / n) )
 
     # Add variable initializer.
     print("Start initialization")
@@ -135,12 +153,13 @@ with graph.as_default():
         # 1. Every time, we select from a (random) possibly different walk.
         # 2. We select one batch from each walk (which means there has to be at least "num_steps" walks)
         for step in xrange(num_steps):
-            batch_inputs, batch_labels = generate_batch(
-                inputdata[step*num_walks_per_node],
-                0,
-                batch_size,
-                num_skips,
-                skip_window)
+            batch_inputs, batch_labels = generate_random_batch(inputdata, batch_size, skip_window)
+          #  batch_inputs, batch_labels = generate_batch(
+          #      inputdata[step*num_walks_per_node],
+          #      0,
+          #      batch_size,
+          #      num_skips,
+          #      skip_window)
 
             feed_dict = {train_inputs: batch_inputs, train_labels: batch_labels}
 
@@ -157,3 +176,11 @@ with graph.as_default():
                     # The average loss is an estimate of the loss over the last 2000 batches
                     print("Average loss at step ", step, ": ", average_loss)
                     average_loss = 0
+
+        final_embeddings = normalized_embeddings.eval()
+
+        data = ""
+        for i, fe in enumerate(final_embeddings):
+            data += str(i) + "," + str(fe) + "\n"
+        with open('embeddings.out.txt', 'w') as fout:
+            fout.write(data)
