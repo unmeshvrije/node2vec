@@ -9,7 +9,7 @@ import time
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import itertools
-
+import timeit
 
 # Function to generate a training batch for the skip-gram model.
 def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
@@ -97,6 +97,7 @@ def parseRandomWalks(inputFile):
         s.add(c)
     return data, s
 
+begin = timeit.default_timer()
 inputfile = sys.argv[1]  # Some text
 inputdata, voc = parseRandomWalks(inputfile)
 dim = int(sys.argv[2])  # number of dimensions
@@ -178,9 +179,12 @@ with graph.as_default():
                     average_loss = 0
 
         final_embeddings = normalized_embeddings.eval()
+        end = timeit.default_timer()
+        print ("Time to train model = %ds" % (end-begin) )
 
         data = ""
         for i, fe in enumerate(final_embeddings):
             data += str(i) + "," + str(fe) + "\n"
-        with open('embeddings.out.txt', 'w') as fout:
+        outFile = inputfile + "-embeddings.out"
+        with open(outFile, 'w') as fout:
             fout.write(data)
