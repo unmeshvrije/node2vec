@@ -107,10 +107,13 @@ batch_size = 128
 num_sampled = 10    # Number of negative examples to sample.
 num_skips = 2         # How many times to reuse an input to generate a label.
 skip_window = 3       # How many words to consider left and right.
+logfile = inputfile + ".log"
 
+
+flog = open(logfile, 'w')
 graph = tf.Graph()
 with graph.as_default():
-    with tf.device('/cpu:0'):
+    with tf.device('/gpu:2'):
         # Init embeddings
         embeddings = tf.Variable(
             tf.random_uniform([n, dim], -1.0, 1.0))
@@ -142,6 +145,7 @@ with graph.as_default():
 
     # Add variable initializer.
     print("Start initialization")
+    flog.write("Start initialization\n")
     init = tf.global_variables_initializer()
     average_loss = 0
     current_idx = 0
@@ -149,6 +153,7 @@ with graph.as_default():
         # We must initialize all variables before we use them.
         init.run()
         print("Initialized")
+        flog.write("Initialized\n")
         start = time.time()
         # Strategies to select batches:
         # 1. Every time, we select from a (random) possibly different walk.
@@ -172,15 +177,18 @@ with graph.as_default():
             if step % 2000 == 0:
                 if step > 0:
                     print("Time epoch", (time.time() - start))
+                    flog.write("Time epoch %d\n" % (time.time() - start))
                     start = time.time()
                     average_loss /= 2000
                     # The average loss is an estimate of the loss over the last 2000 batches
                     print("Average loss at step ", step, ": ", average_loss)
+                    flog.write("Average loss at step (%d) : %f\n" %(step, average_loss))
                     average_loss = 0
 
         final_embeddings = normalized_embeddings.eval()
         end = timeit.default_timer()
         print ("Time to train model = %ds" % (end-begin) )
+        flog.write ("Time to train model = %ds\n" % (end-begin) )
 
         data = ""
         for i, fe in enumerate(final_embeddings):
