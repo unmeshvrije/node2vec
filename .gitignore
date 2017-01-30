@@ -1,1 +1,4 @@
 *.pyc
+*.out
+*.job
+*.edgelist
