@@ -68,13 +68,15 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
         log.info("Computed cosine distance with neighbours of %d\n" % (head))
 
         for k,v in enumerate(sorted_dict):
-            if k == TOPK:
+            if k == (TOPK-1):
                 break
             if v[0] == tail:
                 out.append((head, tail, k))
                 flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
-        if k == TOPK:
+        if k == (TOPK-1):
             out.append((head, tail, -1))
+        else:
+            out.append((head, tail, -2))
 
     return out
 
