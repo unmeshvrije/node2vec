@@ -10,24 +10,15 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('EVAL-EMBED')
-
+evalMethod = "cosine"
 
 def incoming_neighbours(entity, graph):
     relations_entity_is_tail = graph['incoming'][entity].keys()
-    incoming_neighbours = []
-    for r in relations_entity_is_tail:
-        for e in graph['relations_tail'][r].keys():
-            incoming_neighbours.append(e)
-
+    incoming_neighbours = list(graph['incoming'][entity].values())[0]
     return incoming_neighbours
 
 def outgoing_neighbours(entity, graph):
-    relations_entity_is_head = graph['outgoing'][entity].keys()
-    outgoing_neighbours = []
-    for r in relations_entity_is_head:
-        for e in graph['relations_head'][r].keys():
-            outgoing_neighbours.append(e)
-
+    outgoing_neighbours = list(graph['outgoing'][entity].values())[0]
     return outgoing_neighbours
 
 def make_graph(triples, N, M):
@@ -65,7 +56,10 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
         else:
             cos_dict = ddict()
             for i, o in enumerate(outgoing):
-                cos_dict[i] = cosTheta(em[head], em[o])
+                if evalMethod == "cosine":
+                    cos_dict[i] = cosTheta(em[head], em[o])
+                else:
+                    cos_dict[i] = l1Distance(em[head], em[o])
             cos_dicts[head] = cos_dict
             computed.append(head)
 
@@ -104,15 +98,12 @@ def processPickleFile(datafile):
         data = pickle.load(fin)
     return data
 
-def l1Distance(em1, em2):
-    distances = []
-    for i, (e1, e2) in enumerate(zip(em1, em2)):
-        out = 0
+def l1Distance(v1, v2):
+    distance = 0
+    for e1, e2 in zip(v1, v2):
         r = numpy.abs(e1 - e2)
-        for el in r:
-            out += el
-        distances.append((i, out))
-    return distances
+        distance += r
+    return distance
 
 # cosine similarity function
 # http://stackoverflow.com/questions/1746501/can-someone-give-an-example-of-cosine-similarity-in-a-very-simple-graphical-wa
@@ -124,7 +115,7 @@ def cosTheta(v1, v2):
 
 
 if __name__=='__main__':
-    if len(sys.argv) != 4:
+    if len(sys.argv) < 4:
         print ("Usage: python %s <embeddings.txt> <kb.bin> <TOPK>" % (sys.arg[0]))
         sys.exit()
 
@@ -137,6 +128,10 @@ if __name__=='__main__':
     flog.write("Time to process files  = %ds\n" % (time.time() - start))
     log.info("Time to process files  = %ds\n" % (time.time() - start))
     TOPK = int(sys.argv[3])
+
+    if (len(sys.argv) > 4):
+        evalMethod = sys.argv[4]
+
     N = len(kb['entities'])
     M = len(kb['relations'])
     training = kb['train_subs']
