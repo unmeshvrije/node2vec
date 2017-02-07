@@ -152,7 +152,7 @@ if __name__=='__main__':
     log.info("Time to build graphs from triples = %ds\n" %(time.time() - start))
 
     if N != len(embeddings):
-        print("Number of entities don't match (embeddings file and database)")
+        print("Number of entities don't match (embeddings file contains (%d) and pickle database contains (%d))" % (len(embeddings), N))
         sys.exit()
 
     start = time.time()
