@@ -67,6 +67,7 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
         flog.write("Computed cosine distance with neighbours of %d\n" % (head))
         log.info("Computed cosine distance with neighbours of %d\n" % (head))
 
+        found = False
         for k,v in enumerate(sorted_dict):
             if k == TOPK:
                 break
@@ -74,14 +75,16 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
             if v[0] == tail:
                 out.append((head, tail, k))
                 flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
+                found = True
                 break
         if k == TOPK:
             out.append((head, tail, -1))
         else:
             # The last element added was the tuple with entity that had <TOPK neighbours
             # Delete this entry and mark it with -2
-            del out[-1]
-            out.append((head, tail, -2))
+            if not found:
+                del out[-1]
+                out.append((head, tail, -2))
 
     return out
 
