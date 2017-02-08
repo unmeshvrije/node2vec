@@ -44,9 +44,9 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
     log.info("Number of triples = %d\n" % (len(triples)))
     flog.write("Number of triples = %d\n" % (len(triples)))
     for i, t in enumerate(triples):
-        head = t[0]
-        tail = t[1]
-        relation = t[2]
+        head = int(t[0])
+        tail = int(t[1])
+        relation = int(t[2])
         outgoing = outgoing_neighbours(head, graph)
         flog.write ("Triple (%d, %d, %d):\n" %(head,tail, relation))
         log.info ("Triple (%d, %d, %d):\n" %(head, tail, relation))
@@ -57,9 +57,9 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
             cos_dict = ddict()
             for i, o in enumerate(outgoing):
                 if evalMethod == "cosine":
-                    cos_dict[i] = cosTheta(em[head], em[o])
+                    cos_dict[o] = cosTheta(em[head], em[o])
                 else:
-                    cos_dict[i] = l1Distance(em[head], em[o])
+                    cos_dict[o] = l1Distance(em[head], em[o])
             cos_dicts[head] = cos_dict
             computed.append(head)
 
@@ -68,14 +68,19 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
         log.info("Computed cosine distance with neighbours of %d\n" % (head))
 
         for k,v in enumerate(sorted_dict):
-            if k == (TOPK-1):
+            if k == TOPK:
                 break
+            #flog.write ("%d == %d" % (v[0], tail))
             if v[0] == tail:
                 out.append((head, tail, k))
                 flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
-        if k == (TOPK-1):
+                break
+        if k == TOPK:
             out.append((head, tail, -1))
         else:
+            # The last element added was the tuple with entity that had <TOPK neighbours
+            # Delete this entry and mark it with -2
+            del out[-1]
             out.append((head, tail, -2))
 
     return out
