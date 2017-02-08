@@ -16,7 +16,7 @@ def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
     assert batch_size % num_skips == 0
     assert num_skips <= 2 * skip_window
 
-    # current_idx should be always within the bounds of one walk. 
+    # current_idx should be always within the bounds of one walk.
     # In other words, every batch should contain nodes from the same walk.
     batch = np.ndarray(shape=(batch_size), dtype=np.int64)
     labels = np.ndarray(shape=(batch_size, 1), dtype=np.int64)

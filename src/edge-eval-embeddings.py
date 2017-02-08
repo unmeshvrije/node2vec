@@ -43,13 +43,15 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
     cos_dicts = ddict()
     log.info("Number of triples = %d\n" % (len(triples)))
     flog.write("Number of triples = %d\n" % (len(triples)))
+    outgoing = [e for e in range(len(em))]
     for i, t in enumerate(triples):
         head = int(t[0])
         tail = int(t[1])
         relation = int(t[2])
-        outgoing = outgoing_neighbours(head, graph)
-        flog.write ("Triple (%d, %d, %d):\n" %(head,tail, relation))
-        log.info ("Triple (%d, %d, %d):\n" %(head, tail, relation))
+        #outgoing = outgoing_neighbours(head, graph)
+        #outgoing = range() #outgoing_neighbours(head, graph)
+        #flog.write ("Triple (%d, %d, %d):\n" %(head,tail, relation))
+        #log.info ("Triple (%d, %d, %d):\n" %(head, tail, relation))
 
         if head in computed:
             cos_dict = cos_dicts[head]
@@ -63,9 +65,14 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
             cos_dicts[head] = cos_dict
             computed.append(head)
 
+        if evalMethod == "cosine":
+            reverse = True
+        else:
+            reverse = False
+
         sorted_dict = sorted(cos_dict.items(), key = operator.itemgetter(1), reverse=True)
-        flog.write("Computed cosine distance with neighbours of %d\n" % (head))
-        log.info("Computed cosine distance with neighbours of %d\n" % (head))
+        #flog.write("Computed cosine distance with neighbours of %d\n" % (head))
+        #log.info("Computed cosine distance with neighbours of %d\n" % (head))
 
         found = False
         for k,v in enumerate(sorted_dict):
@@ -74,7 +81,7 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
             #flog.write ("%d == %d" % (v[0], tail))
             if v[0] == tail:
                 out.append((head, tail, k))
-                flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
+                #flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
                 found = True
                 break
         if k == TOPK:
@@ -171,7 +178,7 @@ if __name__=='__main__':
     log.info("Time to sort and rank best matching objects = %ds\n"%(time.time() - start))
 
     start = time.time()
-    outFile = sys.argv[1] + "-" + "TOP-" + str(TOPK) + ".eval.out"
+    outFile = sys.argv[1] + "-" + "TOP-" + str(TOPK) + "-" + evalMethod + ".eval.out"
     data = "{"
     for i, pairs in enumerate(cosines):
         data += str(i) + ": {"
