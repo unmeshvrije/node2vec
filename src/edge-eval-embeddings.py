@@ -7,18 +7,20 @@ import numpy
 import operator
 import time
 import logging
+import itertools
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('EVAL-EMBED')
 evalMethod = "cosine"
 
 def incoming_neighbours(entity, graph):
-    relations_entity_is_tail = graph['incoming'][entity].keys()
-    incoming_neighbours = list(graph['incoming'][entity].values())[0]
+    all_lists = list(graph['incoming'][entity].values())
+    incoming_neighbours = list(itertools.chain(*all_lists))
     return incoming_neighbours
 
 def outgoing_neighbours(entity, graph):
-    outgoing_neighbours = list(graph['outgoing'][entity].values())[0]
+    all_lists = list(graph['outgoing'][entity].values())
+    outgoing_neighbours = list(itertools.chain(*all_lists))
     return outgoing_neighbours
 
 def make_graph(triples, N, M):
@@ -43,15 +45,14 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
     cos_dicts = ddict()
     log.info("Number of triples = %d\n" % (len(triples)))
     flog.write("Number of triples = %d\n" % (len(triples)))
-    outgoing = [e for e in range(len(em))]
+    #outgoing = [e for e in range(len(em))]
     for i, t in enumerate(triples):
         head = int(t[0])
         tail = int(t[1])
         relation = int(t[2])
-        #outgoing = outgoing_neighbours(head, graph)
-        #outgoing = range() #outgoing_neighbours(head, graph)
-        #flog.write ("Triple (%d, %d, %d):\n" %(head,tail, relation))
-        #log.info ("Triple (%d, %d, %d):\n" %(head, tail, relation))
+        outgoing = outgoing_neighbours(head, graph)
+        flog.write ("Triple(%d %d %d) [%d]: \n" %(head,tail, relation, len(outgoing)))
+        log.info ("Triple (%d, %d, %d) [%d] :\n" %(head, tail, relation, len(outgoing)))
 
         if head in computed:
             cos_dict = cos_dicts[head]
@@ -81,7 +82,8 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
             #flog.write ("%d == %d" % (v[0], tail))
             if v[0] == tail:
                 out.append((head, tail, k))
-                #flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
+                flog.write("Found (%d, %d, %d)\n" % (head, tail, k))
+                log.info("Found (%d, %d, %d)\n" % (head, tail, k))
                 found = True
                 break
         if k == TOPK:
@@ -89,9 +91,15 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
         else:
             # The last element added was the tuple with entity that had <TOPK neighbours
             # Delete this entry and mark it with -2
-            if not found:
+            if found == True and len(sorted_dict) < TOPK :
                 del out[-1]
                 out.append((head, tail, -2))
+            else:
+                if not found:
+                    # It should never come here
+                    flog.write("!!! %d (outgoing = %d) (sorted_dict = %d) %d\n" % (head, len(outgoing), len(sorted_dict), k))
+                    log.info("!!! %d (outgoing = %d) (sorted_dict = %d) %d\n" % (head, len(outgoing), len(sorted_dict), k))
+
 
     return out
 
