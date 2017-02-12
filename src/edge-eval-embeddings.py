@@ -51,8 +51,8 @@ def find_closest_neighbours(triples, em, TOPK, graph, flog):
         tail = int(t[1])
         relation = int(t[2])
         outgoing = outgoing_neighbours(head, graph)
-        flog.write ("Triple(%d %d %d) [%d]: \n" %(head,tail, relation, len(outgoing)))
-        log.info ("Triple (%d, %d, %d) [%d] :\n" %(head, tail, relation, len(outgoing)))
+        flog.write ("Triple(%d %d %d) [%d]:\n" %(head,tail, relation, len(outgoing)))
+        log.info ("Triple (%d, %d, %d) [%d]:\n" %(head, tail, relation, len(outgoing)))
 
         if head in computed:
             cos_dict = cos_dicts[head]
