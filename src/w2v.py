@@ -39,6 +39,26 @@ def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
     return batch, labels
 
 
+def build_dataset(words):
+    count = [['UNK', -1]]
+    count.extend(collections.Counter(words).most_common(n - 1))
+    dictionary = dict()
+    for word, _ in count:
+        dictionary[word] = len(dictionary)
+    data = list()
+    unk_count = 0
+    for word in words:
+        if word in dictionary:
+            index = dictionary[word]
+        else:
+            index = 0  # dictionary['UNK']
+            unk_count += 1
+        data.append(index)
+    count[0][1] = unk_count
+    reverse_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
+    return data, count, dictionary, reverse_dictionary
+
+
 def generate_random_batch(walks, batch_size, skip_window):
     batch = np.ndarray(shape=(batch_size), dtype=np.int64)
     labels = np.ndarray(shape=(batch_size, 1), dtype=np.int64)
@@ -103,12 +123,18 @@ inputdata, voc = parseRandomWalks(inputfile)
 dim = int(sys.argv[2])  # number of dimensions
 # n = int(sys.argv[3])  # the number of nodes
 n = len(voc) #+ 1
+
+data, count, dictionary, reverse_dictionary = build_dataset(voc)
+
 batch_size = 128
 num_sampled = 10    # Number of negative examples to sample.
 num_skips = 2         # How many times to reuse an input to generate a label.
 skip_window = 3       # How many words to consider left and right.
 logfile = inputfile + ".log"
 
+valid_size = 16 # Random set of words to evaluate similarity on.
+valid_window = 1000 # Pick the samples from first 1000 identifiers for entities and relations
+valid_examples = np.random.choice(valid_window, valid_size, replace=False)
 
 flog = open(logfile, 'w')
 graph = tf.Graph()
@@ -123,6 +149,8 @@ with graph.as_default():
     # Placeholders for inputs
     train_inputs = tf.placeholder(tf.int64, shape=[batch_size])
     train_labels = tf.placeholder(tf.int64, shape=[batch_size, 1])
+
+    valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
     # Loss function
@@ -134,6 +162,8 @@ with graph.as_default():
     # Compute the cosine similarity between minibatch examples and all embeddings.
     norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
     normalized_embeddings = embeddings / norm
+    valid_embeddings = tf.nn.embedding_lookup(normalized_embeddings, valid_dataset)
+    similarity = tf.matmul(valid_embeddings, normalized_embeddings, transpose_b = True)
 
     # Step 5: Begin training.
     #num_steps = 100001
@@ -184,6 +214,20 @@ with graph.as_default():
                     print("Average loss at step ", step, ": ", average_loss)
                     flog.write("Average loss at step (%d) : %f\n" %(step, average_loss))
                     average_loss = 0
+
+            if step % 10000 == 0:
+                sim = similarity.eval()
+                for i in xrange(valid_size):
+                    valid_word = reverse_dictionary[valid_examples[i]]
+                    top_k = 8
+                    nearest = (-sim[i, :]).argsort()[1:top_k + 1]
+                    log_str = "%s : " % valid_word
+                    for k in xrange(top_k):
+                        close_word = reverse_dictionary[nearest[k]]
+                        log_str = "%s %s," % (log_str, close_word)
+                    log_str += "\n"
+                    print (log_str)
+                    flog.write(log_str)
 
         final_embeddings = normalized_embeddings.eval()
         end = timeit.default_timer()

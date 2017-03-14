@@ -88,7 +88,11 @@ class Graph():
         for node in G.nodes():
             unnormalized_probs = [G[node][nbr]['weight'] for nbr in sorted(G.neighbors(node))]
             norm_const = sum(unnormalized_probs)
-            normalized_probs =  [float(u_prob)/norm_const for u_prob in unnormalized_probs]
+            if norm_const == 0:
+                print ("divide by 0 is going to happen")
+                normalized_probs = [0] * len(unnormalized_probs)
+            else:
+                normalized_probs =  [float(u_prob)/norm_const for u_prob in unnormalized_probs]
             alias_nodes[node] = alias_setup(normalized_probs)
 
         alias_edges = {}
