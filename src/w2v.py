@@ -134,12 +134,24 @@ logfile = inputfile + ".log"
 
 valid_size = 16 # Random set of words to evaluate similarity on.
 valid_window = 1000 # Pick the samples from first 1000 identifiers for entities and relations
+
+# TODO:
+# We need two array of identifiers. One for entities and one for relations, so that we can compute cosine distances for both separately
+# valid_examples will not be random. They will be taken from the test-dataset of knowledge base.
+# 1. Parse test-dataset, make 3 arrays: array of heads, array of predicates and array of tails
+# 2. Create corresponding tensor objects to compute cosine distance between
+#   A) all heads and all entities
+#   B) all relations and all entities
+#   C) all tails and all entities
+# 3. Compute similarity based on cosine distances and do head/tail predictions
+#   A) For tail prediction, find TOP K entities similar to head and TOP K entities similar to relations, and take their intersection
+#   B) For head prediction, find TOP K entities similar to tail and TOP K entities similar to relations, and take their intersection
 valid_examples = np.random.choice(valid_window, valid_size, replace=False)
 
 flog = open(logfile, 'w')
 graph = tf.Graph()
 with graph.as_default():
-    with tf.device('/gpu:2'):
+    with tf.device('/cpu:0'):
         # Init embeddings
         embeddings = tf.Variable(
             tf.random_uniform([n, dim], -1.0, 1.0))
@@ -215,7 +227,7 @@ with graph.as_default():
                     flog.write("Average loss at step (%d) : %f\n" %(step, average_loss))
                     average_loss = 0
 
-            if step % 10000 == 0:
+            if step % 10000 == 0 or step == num_steps-1:
                 sim = similarity.eval()
                 for i in xrange(valid_size):
                     valid_word = reverse_dictionary[valid_examples[i]]
