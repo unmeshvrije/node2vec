@@ -26,12 +26,15 @@ class Graph():
             cur_nbrs = sorted(G.neighbors(cur))
             if len(cur_nbrs) > 0:
                 if len(walk) == 1:
-                    walk.append(cur_nbrs[alias_draw(alias_nodes[cur][0], alias_nodes[cur][1])])
+                    next = cur_nbrs[alias_draw(alias_nodes[cur][0], alias_nodes[cur][1])]
+                    label = G.get_edge_data(cur, next)
+                    walk_edges.append(label['label'])
+                    walk.append(next)
                 else:
                     prev = walk[-2]
                     next = cur_nbrs[alias_draw(alias_edges[(prev, cur)][0], alias_edges[(prev, cur)][1])]
                     label = G.get_edge_data(cur, next)
-                    walk_edges.append(label['weight'])
+                    walk_edges.append(label['label'])
                     walk.append(next)
             else:
                 break

@@ -5,11 +5,18 @@ import sys
 import math
 import random
 import collections
+import pickle
 import time
+import argparse
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import itertools
 import timeit
+
+def processPickleFile(datafile):
+    with open(datafile, 'rb') as fin:
+        data = pickle.load(fin)
+    return data
 
 # Function to generate a training batch for the skip-gram model.
 def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
@@ -117,11 +124,23 @@ def parseRandomWalks(inputFile):
         s.add(c)
     return data, s
 
+
+parser = argparse.ArgumentParser(prog = "Word2Vec with modified walks")
+parser.add_argument('--fin', type=str, help = "Embeddings in the python object text format")
+parser.add_argument('--fdb', type=str, help = "Pickle database")
+parser.add_argument('--topk', type=int, default=20, help = "TOPK value for evaluation")
+parser.add_argument('--dim', type=int, default=50, help = "Number of dimensions")
+parser.add_argument('--eval-method', type=str, help = "Evaluation method", default='cosine')
+parser.add_argument('--dev', type=str, help = "Whether to run on CPU or GPU", default='gpu')
+
+
+args = parser.parse_args()
 begin = timeit.default_timer()
-inputfile = sys.argv[1]  # Some text
+inputfile = args.fin  # random walks
 inputdata, voc = parseRandomWalks(inputfile)
-dim = int(sys.argv[2])  # number of dimensions
-# n = int(sys.argv[3])  # the number of nodes
+dim = args.dim  # number of dimensions
+picklefile = args.fdb # Pickle database containing same IDs as that of the random walks file
+dev = args.dev
 n = len(voc) #+ 1
 
 data, count, dictionary, reverse_dictionary = build_dataset(voc)
@@ -139,6 +158,18 @@ valid_window = 1000 # Pick the samples from first 1000 identifiers for entities 
 # We need two array of identifiers. One for entities and one for relations, so that we can compute cosine distances for both separately
 # valid_examples will not be random. They will be taken from the test-dataset of knowledge base.
 # 1. Parse test-dataset, make 3 arrays: array of heads, array of predicates and array of tails
+
+testHeads = []
+testTails = []
+testPreds = []
+kbRecords = processPickleFile(picklefile)
+test = kbRecords['test_subs']
+test_data_size = len(test)
+for t in test:
+    testHeads.append(t[0])
+    testTails.append(t[1])
+    testPreds.append(t[2])
+
 # 2. Create corresponding tensor objects to compute cosine distance between
 #   A) all heads and all entities
 #   B) all relations and all entities
@@ -147,11 +178,19 @@ valid_window = 1000 # Pick the samples from first 1000 identifiers for entities 
 #   A) For tail prediction, find TOP K entities similar to head and TOP K entities similar to relations, and take their intersection
 #   B) For head prediction, find TOP K entities similar to tail and TOP K entities similar to relations, and take their intersection
 valid_examples = np.random.choice(valid_window, valid_size, replace=False)
+batch_heads = np.array(testHeads)
+batch_tails = np.array(testTails)
+batch_preds = np.array(testPreds)
 
 flog = open(logfile, 'w')
 graph = tf.Graph()
 with graph.as_default():
-    with tf.device('/cpu:0'):
+    # This is specific to DAS5 node026 and node029, where Titan Pascal GPU is with device id 2
+    if dev == 'gpu':
+        device_string = '/gpu:2'
+    else:
+        device_string = '/cpu:0'
+    with tf.device(device_string):
         # Init embeddings
         embeddings = tf.Variable(
             tf.random_uniform([n, dim], -1.0, 1.0))
@@ -163,6 +202,9 @@ with graph.as_default():
     train_labels = tf.placeholder(tf.int64, shape=[batch_size, 1])
 
     valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
+    test_dataset_heads = tf.constant(batch_heads, dtype=tf.int32)
+    test_dataset_tails = tf.constant(batch_tails, dtype=tf.int32)
+    test_dataset_preds = tf.constant(batch_preds, dtype=tf.int32)
     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
     # Loss function
@@ -174,8 +216,18 @@ with graph.as_default():
     # Compute the cosine similarity between minibatch examples and all embeddings.
     norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
     normalized_embeddings = embeddings / norm
+
     valid_embeddings = tf.nn.embedding_lookup(normalized_embeddings, valid_dataset)
     similarity = tf.matmul(valid_embeddings, normalized_embeddings, transpose_b = True)
+
+    head_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_heads)
+    head_similarity = tf.matmul(head_embeddings, normalized_embeddings, transpose_b = True)
+
+    tail_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_tails)
+    tail_similarity = tf.matmul(tail_embeddings, normalized_embeddings, transpose_b = True)
+
+    pred_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_preds)
+    pred_similarity = tf.matmul(pred_embeddings, normalized_embeddings, transpose_b = True)
 
     # Step 5: Begin training.
     #num_steps = 100001
@@ -227,17 +279,73 @@ with graph.as_default():
                     flog.write("Average loss at step (%d) : %f\n" %(step, average_loss))
                     average_loss = 0
 
-            if step % 10000 == 0 or step == num_steps-1:
+            if step == num_steps-1:
+                # Test loop starts here
                 sim = similarity.eval()
-                for i in xrange(valid_size):
-                    valid_word = reverse_dictionary[valid_examples[i]]
-                    top_k = 8
-                    nearest = (-sim[i, :]).argsort()[1:top_k + 1]
-                    log_str = "%s : " % valid_word
+                sim_head = head_similarity.eval()
+                sim_tail = tail_similarity.eval()
+                sim_pred = pred_similarity.eval()
+                # for i in xrange(valid_size):
+                #     valid_word = reverse_dictionary[valid_examples[i]]
+                #     top_k = 8
+                #     nearest = (-sim[i, :]).argsort()[1:top_k + 1]
+                #     log_str = "%s : " % valid_word
+                #     for k in xrange(top_k):
+                #         close_word = reverse_dictionary[nearest[k]]
+                #         log_str = "%s %s," % (log_str, close_word)
+                #     log_str += "\n"
+                #     print (log_str)
+                #     flog.write(log_str)
+                #
+                for i in xrange(test_data_size):
+                    # Tail prediction for triple
+                    #     head   ,   tail    , predicate >
+                    # <test[i][0], test[i][1], test[i][2]>
+
+                    # We don't need the reverse dictionary. It was used to map numbers to possible stringized entities.
+                    # Our head, tail and predicates are already numbers.
+                    log_str = "Itr# %d\n" % i
+                    print (log_str)
+                    flog.write(log_str)
+                    top_k = 20
+                    entity = reverse_dictionary[batch_heads[i]]
+                    nearest = (-sim_head[i, :]).argsort()[1:top_k + 1]
+                    rank_entity = -1
                     for k in xrange(top_k):
                         close_word = reverse_dictionary[nearest[k]]
-                        log_str = "%s %s," % (log_str, close_word)
-                    log_str += "\n"
+                        if close_word == batch_tails[i]:
+                            rank_entity = k
+
+                    relation = reverse_dictionary[batch_preds[i]]
+                    nearest = (-sim_pred[i, :]).argsort()[1:top_k + 1]
+                    rank_relation = -1
+                    for k in xrange(top_k):
+                        close_word = reverse_dictionary[nearest[k]]
+                        if close_word == batch_tails[i]:
+                            rank_relation = k
+                    #if relation == 'UNK':
+                    #    print (relation, i)
+                    log_str = "%s : %d , %s : %d\n" % (entity, rank_entity, relation, rank_relation)
+                    print (log_str)
+                    flog.write(log_str)
+
+                    # Head prediction for triple
+                    # target word is the tail and we will predict the possible head
+                    entity = reverse_dictionary[batch_tails[i]]
+                    nearest = (-sim_tail[i, :]).argsort()[1:top_k + 1]
+                    rank_entity = -1
+                    for k in xrange(top_k):
+                        close_word = reverse_dictionary[nearest[k]]
+                        if close_word == batch_heads[i]:
+                            rank_entity = k
+                    relation = reverse_dictionary[batch_preds[i]]
+                    nearest = (-sim_pred[i, :]).argsort()[1:top_k + 1]
+                    rank_relation = -1
+                    for k in xrange(top_k):
+                        close_word = reverse_dictionary[nearest[k]]
+                        if close_word == batch_heads[i]:
+                            rank_relation = k
+                    log_str = "%s : %d , %s : %d\n" % (entity, rank_entity, relation, rank_relation)
                     print (log_str)
                     flog.write(log_str)
 
