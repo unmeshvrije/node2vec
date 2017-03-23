@@ -12,6 +12,7 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import itertools
 import timeit
+from numpy import argsort
 
 def processPickleFile(datafile):
     with open(datafile, 'rb') as fin:
@@ -301,51 +302,30 @@ with graph.as_default():
                     # Tail prediction for triple
                     #     head   ,   tail    , predicate >
                     # <test[i][0], test[i][1], test[i][2]>
-
+                    head = test[i][0]
+                    tail = test[i][1]
+                    pred = test[i][2]
                     # We don't need the reverse dictionary. It was used to map numbers to possible stringized entities.
                     # Our head, tail and predicates are already numbers.
                     log_str = "Itr# %d\n" % i
                     print (log_str)
-                    flog.write(log_str)
-                    top_k = 20
-                    entity = reverse_dictionary[batch_heads[i]]
-                    nearest = (-sim_head[i, :]).argsort()[1:top_k + 1]
-                    rank_entity = -1
-                    for k in xrange(top_k):
-                        close_word = reverse_dictionary[nearest[k]]
-                        if close_word == batch_tails[i]:
-                            rank_entity = k
+                    nearest_tail_for_head = argsort(sim_head[i])[::-1]
+                    rank_entity = np.where(nearest_tail_for_head == tail)[0][0]
 
-                    relation = reverse_dictionary[batch_preds[i]]
-                    nearest = (-sim_pred[i, :]).argsort()[1:top_k + 1]
-                    rank_relation = -1
-                    for k in xrange(top_k):
-                        close_word = reverse_dictionary[nearest[k]]
-                        if close_word == batch_tails[i]:
-                            rank_relation = k
-                    #if relation == 'UNK':
-                    #    print (relation, i)
-                    log_str = "%s : %d , %s : %d\n" % (entity, rank_entity, relation, rank_relation)
+                    nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
+                    rank_relation = np.where(nearest_entity_for_relation == tail)[0][0]
+                    log_str = "%s : %d , %s : %d\n" % (head, rank_entity, pred, rank_relation)
                     print (log_str)
                     flog.write(log_str)
 
                     # Head prediction for triple
                     # target word is the tail and we will predict the possible head
-                    entity = reverse_dictionary[batch_tails[i]]
-                    nearest = (-sim_tail[i, :]).argsort()[1:top_k + 1]
-                    rank_entity = -1
-                    for k in xrange(top_k):
-                        close_word = reverse_dictionary[nearest[k]]
-                        if close_word == batch_heads[i]:
-                            rank_entity = k
-                    relation = reverse_dictionary[batch_preds[i]]
-                    nearest = (-sim_pred[i, :]).argsort()[1:top_k + 1]
-                    rank_relation = -1
-                    for k in xrange(top_k):
-                        close_word = reverse_dictionary[nearest[k]]
-                        if close_word == batch_heads[i]:
-                            rank_relation = k
-                    log_str = "%s : %d , %s : %d\n" % (entity, rank_entity, relation, rank_relation)
+                    nearest_head_for_tail = argsort(sim_tail[i])[::-1]
+                    rank_entity = np.where(nearest_head_for_tail == head)[0][0]
+
+                    #nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
+                    rank_relation = np.where(nearest_entity_for_relation == head)[0][0]
+                    log_str = "%s : %d , %s : %d\n" % (tail, rank_entity, pred, rank_relation)
                     print (log_str)
                     flog.write(log_str)
 
