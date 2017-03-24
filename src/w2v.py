@@ -3,6 +3,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'  # suppress warnings
 import tensorflow as tf
 import sys
 import math
+import networkx as nx
 import random
 import collections
 import pickle
@@ -18,6 +19,96 @@ def processPickleFile(datafile):
     with open(datafile, 'rb') as fin:
         data = pickle.load(fin)
     return data
+
+# TAIL PREDICTIONS based on graph structure : helper functions
+# 1
+def n_entity_appear_as_tail_of_predicate(G, entity, predicate):
+    cnt = 0
+    for e in G.in_edges(entity):
+        data = G.get_edge_data(e[0], e[1])
+        if (data['label'] == predicate):
+            cnt += 1
+    return cnt
+
+# 2
+def n_entity_appear_as_tail_of_entity(G, entity, head):
+    cnt = 0
+    for e in G.in_edges(entity):
+        if e[0] == head:
+            cnt += 1
+    return cnt
+
+# 3
+# if node->entity1 and node->entity2, then increase count
+def n_entity_related_to_both(G, entity1, entity2):
+    cnt = 0
+    for node in G.nodes():
+        successors = G.successors(node)
+        if entity1 in successors and entity2 in successors:
+            cnt += 1
+        return cnt
+
+# 4
+def n_entity_transitively_similar_tail(G, entity, head):
+    cnt = 0;
+    head_successors = G.successors(head)
+    for node in G.nodes():
+        if node not in head_successors:
+            continue
+        successors = G.successors(node)
+        predecessors = G.predecessors(node)
+        if entity in successors or entity in predecessors:
+            cnt += 1
+
+    return cnt
+
+def compute_fitness_score_for_tail_prediction(G, head, predicate, entity):
+    return n_entity_appear_as_tail_of_predicate(G, entity, predicate) +  \
+    n_entity_appear_as_tail_of_entity(G, entity, head) + \
+    n_entity_related_to_both(G, entity, head) + \
+    n_entity_transitively_similar_tail(G, entity, head)
+
+
+# HEAD PREDICTIONS based on graph structure : helper functions
+# 1
+def n_entity_appear_as_head_of_predicate(G, entity, predicate):
+    cnt = 0
+    for e in G.out_edges(entity):
+        data = G.get_edge_data(e[0], e[1])
+        if (data['label'] == predicate):
+            cnt += 1
+    return cnt
+
+# 2
+def n_entity_appear_as_head_of_entity(G, entity, tail):
+    cnt = 0
+    for e in G.out_edges(entity):
+        if e[0] == tail:
+            cnt += 1
+    return cnt
+
+# 3
+# same as tail pedictions
+
+# 4
+def n_entity_transitively_similar_head(G, entity, tail):
+    cnt = 0;
+    tail_predecessors = G.predecessors(tail)
+    for node in G.nodes():
+        if node not in tail_predecessors:
+            continue
+        successors = G.successors(node)
+        predecessors = G.predecessors(node)
+        if entity in successors or entity in predecessors:
+            cnt += 1
+
+    return cnt
+
+def compute_fitness_score_for_head_prediction(G, entity, predicate, tail):
+    return n_entity_appear_as_head_of_predicate(G, entity, predicate) + \
+    n_entity_appear_as_head_of_entity(G, entity, tail) + \
+    n_entity_related_to_both(G, entity, tail) + \
+    n_entity_transitively_similar_head(G, entity, tail)
 
 # Function to generate a training batch for the skip-gram model.
 def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
@@ -45,7 +136,6 @@ def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
         buffer.append(data[current_idx])
         current_idx = (current_idx + 1) % len(data)
     return batch, labels
-
 
 def build_dataset(words):
     count = [['UNK', -1]]
@@ -129,7 +219,7 @@ def parseRandomWalks(inputFile):
 parser = argparse.ArgumentParser(prog = "Word2Vec with modified walks")
 parser.add_argument('--fin', type=str, help = "Embeddings in the python object text format")
 parser.add_argument('--fdb', type=str, help = "Pickle database")
-parser.add_argument('--topk', type=int, default=20, help = "TOPK value for evaluation")
+parser.add_argument('--topk', type=int, default=10, help = "TOPK value for evaluation")
 parser.add_argument('--dim', type=int, default=50, help = "Number of dimensions")
 parser.add_argument('--eval-method', type=str, help = "Evaluation method", default='cosine')
 parser.add_argument('--dev', type=str, help = "Whether to run on CPU or GPU", default='gpu')
@@ -140,6 +230,7 @@ begin = timeit.default_timer()
 inputfile = args.fin  # random walks
 inputdata, voc = parseRandomWalks(inputfile)
 dim = args.dim  # number of dimensions
+topk = args.topk
 picklefile = args.fdb # Pickle database containing same IDs as that of the random walks file
 dev = args.dev
 n = len(voc) #+ 1
@@ -164,12 +255,20 @@ testHeads = []
 testTails = []
 testPreds = []
 kbRecords = processPickleFile(picklefile)
+train = kbRecords['train_subs']
 test = kbRecords['test_subs']
 test_data_size = len(test)
 for t in test:
     testHeads.append(t[0])
     testTails.append(t[1])
     testPreds.append(t[2])
+
+G = nx.DiGraph()
+for t in train:
+    head = t[0]
+    tail = t[1]
+    relation = t[2]
+    G.add_edge(head, tail, label=relation)
 
 # 2. Create corresponding tensor objects to compute cosine distance between
 #   A) all heads and all entities
@@ -282,7 +381,7 @@ with graph.as_default():
 
             if step == num_steps-1:
                 # Test loop starts here
-                sim = similarity.eval()
+                #sim = similarity.eval()
                 sim_head = head_similarity.eval()
                 sim_tail = tail_similarity.eval()
                 sim_pred = pred_similarity.eval()
@@ -298,6 +397,16 @@ with graph.as_default():
                 #     print (log_str)
                 #     flog.write(log_str)
                 #
+                tail_prediction_entity_ranks = []
+                tail_prediction_relation_ranks = []
+                head_prediction_entity_ranks = []
+                head_prediction_relation_ranks = []
+                tail_prediction_hits = 0
+                head_prediction_hits = 0
+                fs_tail_prediction_hits = 0
+                fs_head_prediction_hits = 0
+                fs_tail_prediction_ranks = []
+                fs_head_prediction_ranks = []
                 for i in xrange(test_data_size):
                     # Tail prediction for triple
                     #     head   ,   tail    , predicate >
@@ -305,34 +414,89 @@ with graph.as_default():
                     head = test[i][0]
                     tail = test[i][1]
                     pred = test[i][2]
-                    # We don't need the reverse dictionary. It was used to map numbers to possible stringized entities.
-                    # Our head, tail and predicates are already numbers.
                     log_str = "Itr# %d\n" % i
                     print (log_str)
                     nearest_tail_for_head = argsort(sim_head[i])[::-1]
-                    rank_entity = np.where(nearest_tail_for_head == tail)[0][0]
+                    tail_prediction_rank_entity = np.where(nearest_tail_for_head == tail)[0][0]
+                    tail_prediction_entity_ranks.append(tail_prediction_rank_entity)
 
                     nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
-                    rank_relation = np.where(nearest_entity_for_relation == tail)[0][0]
-                    log_str = "%s : %d , %s : %d\n" % (head, rank_entity, pred, rank_relation)
-                    print (log_str)
-                    flog.write(log_str)
+                    tail_prediction_rank_relation = np.where(nearest_entity_for_relation == tail)[0][0]
+                    tail_prediction_relation_ranks.append(tail_prediction_rank_relation)
+
+                    if tail_prediction_rank_entity < topk or tail_prediction_rank_relation < topk:
+                        tail_prediction_hits += 1
 
                     # Head prediction for triple
                     # target word is the tail and we will predict the possible head
                     nearest_head_for_tail = argsort(sim_tail[i])[::-1]
-                    rank_entity = np.where(nearest_head_for_tail == head)[0][0]
+                    head_prediction_rank_entity = np.where(nearest_head_for_tail == head)[0][0]
+                    head_prediction_entity_ranks.append(head_prediction_rank_entity)
 
                     #nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
-                    rank_relation = np.where(nearest_entity_for_relation == head)[0][0]
-                    log_str = "%s : %d , %s : %d\n" % (tail, rank_entity, pred, rank_relation)
-                    print (log_str)
-                    flog.write(log_str)
+                    head_prediction_rank_relation = np.where(nearest_entity_for_relation == head)[0][0]
+                    head_prediction_relation_ranks.append(head_prediction_rank_relation)
+
+                    if head_prediction_rank_entity < topk or head_prediction_rank_relation < topk:
+                        head_prediction_hits += 1
+
+                    print ("Computing fitness scores...\n")
+                    fitness_start = timeit.default_timer()
+                    fitness_scores_tail = [0] * n
+                    fitness_scores_head = [0] * n
+                    nodes = G.nodes()
+                    for node in range(n):
+                        if node in nodes:
+                            fitness_scores_tail[i] = compute_fitness_score_for_tail_prediction(G, head, relation, node)
+                            fitness_scores_head[i] = compute_fitness_score_for_head_prediction(G, node, relation, tail)
+                    fs_tail_prediction = argsort(fitness_scores_tail)[::-1]
+                    fs_tail_prediction_rank = np.where(fs_tail_prediction == tail)[0][0]
+                    fs_tail_prediction_ranks.append(fs_tail_prediction_rank)
+                    if (fs_tail_prediction_rank < topk):
+                        fs_tail_prediction_hits += 1
+
+                    fs_head_prediction = argsort(fitness_scores_head)[::-1]
+                    fs_head_prediction_rank = np.where(fs_head_prediction == head)[0][0]
+                    fs_head_prediction_ranks.append(fs_head_prediction_rank)
+                    if (fs_head_prediction_rank < topk):
+                        fs_head_prediction_hits += 1
+
+                    fitness_end = timeit.default_timer()
+
+                    print("time to compute fitness scores = %ds\n" % (fitness_end - fitness_start))
+                    flog.write("time to compute fitness scores = %ds\n" % (fitness_end - fitness_start))
 
         final_embeddings = normalized_embeddings.eval()
         end = timeit.default_timer()
         print ("Time to train model = %ds" % (end-begin) )
         flog.write ("Time to train model = %ds\n" % (end-begin) )
+
+        fs_tail_prediction_hit_rate = float(fs_tail_prediction_hits) / float(test_data_size) * 100
+        fs_tail_prediction_mean_ranks = np.mean(fs_tail_prediction_ranks)
+        fs_head_prediction_hit_rate = float(fs_head_prediction_hits) / float(test_data_size) * 100
+        fs_head_prediction_mean_ranks = np.mean(fs_head_prediction_ranks)
+
+        print ("FS Head prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_head_prediction_mean_ranks, fs_head_prediction_hit_rate))
+        print ("FS Tail prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_tail_prediction_mean_ranks, fs_tail_prediction_hit_rate))
+        flog.write ("FS Head prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_head_prediction_mean_ranks, fs_head_prediction_hit_rate))
+        flog.write ("FS Tail prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_tail_prediction_mean_ranks, fs_tail_prediction_hit_rate))
+
+        tail_prediction_hit_rate = float(tail_prediction_hits) / float(test_data_size) * 100
+        tail_prediction_mean_entity_ranks = np.mean(tail_prediction_entity_ranks)
+        tail_prediction_mean_relation_ranks = np.mean(tail_prediction_relation_ranks)
+        head_prediction_hit_rate = float(head_prediction_hits) / float(test_data_size) * 100
+        head_prediction_mean_entity_ranks = np.mean(head_prediction_entity_ranks)
+        head_prediction_mean_relation_ranks = np.mean(head_prediction_relation_ranks)
+
+        print ("Head prediction:\n Entity Mean rank = %f\nRelation Mean Rank = %f\nHit Rate = %f\n\n" %
+        (head_prediction_mean_entity_ranks, head_prediction_mean_relation_ranks, head_prediction_hit_rate))
+        print ("Tail prediction:\n Entity Mean rank = %f\nRelation Mean Rank = %f\nHit Rate = %f\n\n" %
+        (tail_prediction_mean_entity_ranks, tail_prediction_mean_relation_ranks, tail_prediction_hit_rate))
+
+        flog.write ("Head prediction:\n Entity Mean rank = %f\nRelation Mean Rank = %f\nHit Rate = %f\n\n" %
+        (head_prediction_mean_entity_ranks, head_prediction_mean_relation_ranks, head_prediction_hit_rate))
+        flog.write ("Tail prediction:\n Entity Mean rank = %f\nRelation Mean Rank = %f\nHit Rate = %f\n\n" %
+        (tail_prediction_mean_entity_ranks, tail_prediction_mean_relation_ranks, tail_prediction_hit_rate))
 
         data = ""
         for i, fe in enumerate(final_embeddings):
