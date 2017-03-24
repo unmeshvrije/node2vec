@@ -20,9 +20,14 @@ def processPickleFile(datafile):
         data = pickle.load(fin)
     return data
 
+def intersection(list1, list2):
+    temp = set(list1)
+    result = [val for val in list2 if val in temp]
+    return result
+
 # TAIL PREDICTIONS based on graph structure : helper functions
 # 1
-def n_entity_appear_as_tail_of_predicate(G, entity, predicate):
+def n_entity_appear_as_tail_of_predicate(G, predicate, entity):
     cnt = 0
     for e in G.in_edges(entity):
         data = G.get_edge_data(e[0], e[1])
@@ -30,43 +35,24 @@ def n_entity_appear_as_tail_of_predicate(G, entity, predicate):
             cnt += 1
     return cnt
 
-# 2
-def n_entity_appear_as_tail_of_entity(G, entity, head):
-    cnt = 0
-    for e in G.in_edges(entity):
-        if e[0] == head:
-            cnt += 1
-    return cnt
-
-# 3
-# if node->entity1 and node->entity2, then increase count
-def n_entity_related_to_both(G, entity1, entity2):
-    cnt = 0
-    for node in G.nodes():
-        successors = G.successors(node)
-        if entity1 in successors and entity2 in successors:
-            cnt += 1
-        return cnt
-
-# 4
-def n_entity_transitively_similar_tail(G, entity, head):
-    cnt = 0;
-    head_successors = G.successors(head)
-    for node in G.nodes():
-        if node not in head_successors:
-            continue
-        successors = G.successors(node)
-        predecessors = G.predecessors(node)
-        if entity in successors or entity in predecessors:
-            cnt += 1
-
-    return cnt
-
 def compute_fitness_score_for_tail_prediction(G, head, predicate, entity):
-    return n_entity_appear_as_tail_of_predicate(G, entity, predicate) +  \
-    n_entity_appear_as_tail_of_entity(G, entity, head) + \
-    n_entity_related_to_both(G, entity, head) + \
-    n_entity_transitively_similar_tail(G, entity, head)
+    head_successors = G.successors(head)
+    head_predecessors = G.predecessors(head)
+    entity_successors = G.successors(entity)
+    entity_predecessors = G.predecessors(entity)
+
+    cnt3 = len(intersection(head_predecessors, entity_predecessors))
+    cnt4 = max(len(intersection(entity_successors, head_successors)), len(intersection(entity_predecessors, head_successors)) )
+
+    cnt1 = 0
+    cnt2 = 0
+    for e in G.in_edges(entity):
+        data = G.get_edge_data(e[0], e[1])
+        if (data['label'] == predicate):
+            cnt1 += 1
+        if e[0] == head:
+            cnt2 += 1
+    return cnt1 + cnt2 + cnt3 + cnt4
 
 
 # HEAD PREDICTIONS based on graph structure : helper functions
@@ -79,36 +65,24 @@ def n_entity_appear_as_head_of_predicate(G, entity, predicate):
             cnt += 1
     return cnt
 
-# 2
-def n_entity_appear_as_head_of_entity(G, entity, tail):
-    cnt = 0
-    for e in G.out_edges(entity):
-        if e[0] == tail:
-            cnt += 1
-    return cnt
-
-# 3
-# same as tail pedictions
-
-# 4
-def n_entity_transitively_similar_head(G, entity, tail):
-    cnt = 0;
-    tail_predecessors = G.predecessors(tail)
-    for node in G.nodes():
-        if node not in tail_predecessors:
-            continue
-        successors = G.successors(node)
-        predecessors = G.predecessors(node)
-        if entity in successors or entity in predecessors:
-            cnt += 1
-
-    return cnt
-
 def compute_fitness_score_for_head_prediction(G, entity, predicate, tail):
-    return n_entity_appear_as_head_of_predicate(G, entity, predicate) + \
-    n_entity_appear_as_head_of_entity(G, entity, tail) + \
-    n_entity_related_to_both(G, entity, tail) + \
-    n_entity_transitively_similar_head(G, entity, tail)
+    tail_successor = G.successors(tail)
+    tail_predecessor = G.predecessors(tail)
+    entity_successors = G.successors(entity)
+    entity_predecessors = G.predecessors(entity)
+
+    cnt3 = len(intersection(tail_predecessor, entity_predecessors))
+    cnt4 = max(len(intersection(entity_successors, tail_predecessor)), len(intersection(entity_predecessors, tail_predecessor)))
+
+    cnt1 = 0
+    cnt2 = 0
+    for e in G.out_edges(entity):
+        data = G.get_edge_data(e[0], e[1])
+        if (data['label'] == predicate):
+            cnt1 += 1
+        if e[0] == tail:
+            cnt2 += 1
+    return cnt1 + cnt2 + cnt3 + cnt4
 
 # Function to generate a training batch for the skip-gram model.
 def generate_batch(data, current_idx, batch_size, num_skips, skip_window):
@@ -447,8 +421,16 @@ with graph.as_default():
                     nodes = G.nodes()
                     for node in range(n):
                         if node in nodes:
-                            fitness_scores_tail[i] = compute_fitness_score_for_tail_prediction(G, head, relation, node)
-                            fitness_scores_head[i] = compute_fitness_score_for_head_prediction(G, node, relation, tail)
+                            if head in nodes:
+                                fitness_scores_tail[node] = compute_fitness_score_for_tail_prediction(G, head, relation, node)
+                            else:
+                                fitness_scores_tail[node] = n_entity_appear_as_tail_of_predicate(G, relation, node)
+
+                            if tail in nodes:
+                                fitness_scores_head[node] = compute_fitness_score_for_head_prediction(G, node, relation, tail)
+                            else:
+                                fitness_scores_head[node] = n_entity_appear_as_head_of_predicate(G, node, relation)
+                        #print ("node ( %d ) : %d , %d\n" % (node, fitness_scores_tail[node], fitness_scores_head[node]))
                     fs_tail_prediction = argsort(fitness_scores_tail)[::-1]
                     fs_tail_prediction_rank = np.where(fs_tail_prediction == tail)[0][0]
                     fs_tail_prediction_ranks.append(fs_tail_prediction_rank)
