@@ -128,7 +128,11 @@ arr = [1,2,4,5,7,8,9]
 #     print (" node ( %d ) = %s\n" % (node, n_entity_transitively_similar(G, 20, node)))
 
 indegrees = sorted(G.in_degree_iter(), key=operator.itemgetter(1), reverse=True)
+#outdegrees = sorted(G.out_degree_iter(), key=operator.itemgetter(1), reverse=True)
+outdegrees = dict(G.out_degree_iter())
 for i in indegrees:
-    print (i)
+    print (i[0], " : ", i[1])
+
+#print(outdegrees[3])
 #print (G.predecessors(2))
 #print (G.predecessors(20))

@@ -195,7 +195,7 @@ parser.add_argument('--fin', type=str, help = "Embeddings in the python object t
 parser.add_argument('--fdb', type=str, help = "Pickle database")
 parser.add_argument('--topk', type=int, default=10, help = "TOPK value for evaluation")
 parser.add_argument('--dim', type=int, default=50, help = "Number of dimensions")
-parser.add_argument('--eval-method', type=str, help = "Evaluation method", default='cosine')
+parser.add_argument('--compute-fs', dest='compute_fs', help = "Evaluation method", action='store_true', default=False)
 parser.add_argument('--dev', type=str, help = "Whether to run on CPU or GPU", default='gpu')
 
 
@@ -207,6 +207,7 @@ dim = args.dim  # number of dimensions
 topk = args.topk
 picklefile = args.fdb # Pickle database containing same IDs as that of the random walks file
 dev = args.dev
+compute_fs = args.compute_fs
 n = len(voc) #+ 1
 
 data, count, dictionary, reverse_dictionary = build_dataset(voc)
@@ -414,54 +415,46 @@ with graph.as_default():
                     if head_prediction_rank_entity < topk or head_prediction_rank_relation < topk:
                         head_prediction_hits += 1
 
-                    print ("Computing fitness scores...\n")
-                    fitness_start = timeit.default_timer()
-                    fitness_scores_tail = [0] * n
-                    fitness_scores_head = [0] * n
-                    nodes = G.nodes()
-                    for node in range(n):
-                        if node in nodes:
-                            if head in nodes:
-                                fitness_scores_tail[node] = compute_fitness_score_for_tail_prediction(G, head, relation, node)
-                            else:
-                                fitness_scores_tail[node] = n_entity_appear_as_tail_of_predicate(G, relation, node)
+                    if compute_fs:
+                        print ("Computing fitness scores...\n")
+                        fitness_start = timeit.default_timer()
+                        fitness_scores_tail = [0] * n
+                        fitness_scores_head = [0] * n
+                        nodes = G.nodes()
+                        for node in range(n):
+                            if node in nodes:
+                                if head in nodes:
+                                    fitness_scores_tail[node] = compute_fitness_score_for_tail_prediction(G, head, relation, node)
+                                else:
+                                    fitness_scores_tail[node] = n_entity_appear_as_tail_of_predicate(G, relation, node)
 
-                            if tail in nodes:
-                                fitness_scores_head[node] = compute_fitness_score_for_head_prediction(G, node, relation, tail)
-                            else:
-                                fitness_scores_head[node] = n_entity_appear_as_head_of_predicate(G, node, relation)
-                        #print ("node ( %d ) : %d , %d\n" % (node, fitness_scores_tail[node], fitness_scores_head[node]))
-                    fs_tail_prediction = argsort(fitness_scores_tail)[::-1]
-                    fs_tail_prediction_rank = np.where(fs_tail_prediction == tail)[0][0]
-                    fs_tail_prediction_ranks.append(fs_tail_prediction_rank)
-                    if (fs_tail_prediction_rank < topk):
-                        fs_tail_prediction_hits += 1
+                                if tail in nodes:
+                                    fitness_scores_head[node] = compute_fitness_score_for_head_prediction(G, node, relation, tail)
+                                else:
+                                    fitness_scores_head[node] = n_entity_appear_as_head_of_predicate(G, node, relation)
+                            #print ("node ( %d ) : %d , %d\n" % (node, fitness_scores_tail[node], fitness_scores_head[node]))
+                        fs_tail_prediction = argsort(fitness_scores_tail)[::-1]
+                        fs_tail_prediction_rank = np.where(fs_tail_prediction == tail)[0][0]
+                        fs_tail_prediction_ranks.append(fs_tail_prediction_rank)
+                        if (fs_tail_prediction_rank < topk):
+                            fs_tail_prediction_hits += 1
 
-                    fs_head_prediction = argsort(fitness_scores_head)[::-1]
-                    fs_head_prediction_rank = np.where(fs_head_prediction == head)[0][0]
-                    fs_head_prediction_ranks.append(fs_head_prediction_rank)
-                    if (fs_head_prediction_rank < topk):
-                        fs_head_prediction_hits += 1
+                        fs_head_prediction = argsort(fitness_scores_head)[::-1]
+                        fs_head_prediction_rank = np.where(fs_head_prediction == head)[0][0]
+                        fs_head_prediction_ranks.append(fs_head_prediction_rank)
+                        if (fs_head_prediction_rank < topk):
+                            fs_head_prediction_hits += 1
 
-                    fitness_end = timeit.default_timer()
+                        fitness_end = timeit.default_timer()
 
-                    print("time to compute fitness scores = %ds\n" % (fitness_end - fitness_start))
-                    flog.write("time to compute fitness scores = %ds\n" % (fitness_end - fitness_start))
+                        print("time to compute fitness scores = %ds\n" % (fitness_end - fitness_start))
+                        flog.write("time to compute fitness scores = %ds\n" % (fitness_end - fitness_start))
 
         final_embeddings = normalized_embeddings.eval()
         end = timeit.default_timer()
         print ("Time to train model = %ds" % (end-begin) )
         flog.write ("Time to train model = %ds\n" % (end-begin) )
 
-        fs_tail_prediction_hit_rate = float(fs_tail_prediction_hits) / float(test_data_size) * 100
-        fs_tail_prediction_mean_ranks = np.mean(fs_tail_prediction_ranks)
-        fs_head_prediction_hit_rate = float(fs_head_prediction_hits) / float(test_data_size) * 100
-        fs_head_prediction_mean_ranks = np.mean(fs_head_prediction_ranks)
-
-        print ("FS Head prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_head_prediction_mean_ranks, fs_head_prediction_hit_rate))
-        print ("FS Tail prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_tail_prediction_mean_ranks, fs_tail_prediction_hit_rate))
-        flog.write ("FS Head prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_head_prediction_mean_ranks, fs_head_prediction_hit_rate))
-        flog.write ("FS Tail prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_tail_prediction_mean_ranks, fs_tail_prediction_hit_rate))
 
         tail_prediction_hit_rate = float(tail_prediction_hits) / float(test_data_size) * 100
         tail_prediction_mean_entity_ranks = np.mean(tail_prediction_entity_ranks)
@@ -479,6 +472,17 @@ with graph.as_default():
         (head_prediction_mean_entity_ranks, head_prediction_mean_relation_ranks, head_prediction_hit_rate))
         flog.write ("Tail prediction:\n Entity Mean rank = %f\nRelation Mean Rank = %f\nHit Rate = %f\n\n" %
         (tail_prediction_mean_entity_ranks, tail_prediction_mean_relation_ranks, tail_prediction_hit_rate))
+
+        if compute_fs:
+            fs_tail_prediction_hit_rate = float(fs_tail_prediction_hits) / float(test_data_size) * 100
+            fs_tail_prediction_mean_ranks = np.mean(fs_tail_prediction_ranks)
+            fs_head_prediction_hit_rate = float(fs_head_prediction_hits) / float(test_data_size) * 100
+            fs_head_prediction_mean_ranks = np.mean(fs_head_prediction_ranks)
+
+            print ("FS Head prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_head_prediction_mean_ranks, fs_head_prediction_hit_rate))
+            print ("FS Tail prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_tail_prediction_mean_ranks, fs_tail_prediction_hit_rate))
+            flog.write ("FS Head prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_head_prediction_mean_ranks, fs_head_prediction_hit_rate))
+            flog.write ("FS Tail prediction:\nMean rank = %f\nHit rate = %f\n\n" % (fs_tail_prediction_mean_ranks, fs_tail_prediction_hit_rate))
 
         data = ""
         for i, fe in enumerate(final_embeddings):

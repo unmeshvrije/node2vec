@@ -49,20 +49,36 @@ def parse_args():
     parser.add_argument('--undirected', dest='undirected', action='store_false')
     parser.set_defaults(directed=False)
 
+    parser.add_argument('--ignore-popular', dest='ignore_popular', action='store_true', default=False, help = 'Boolean telling whether to ignore popular nodes while doing random walk. Default is not ignoring')
     return parser.parse_args()
 
-def read_graph():
+def read_graph(ignore_popular):
     '''
     Reads the input network in networkx.
     '''
     if args.weighted:
         G = nx.read_edgelist(args.input, nodetype=int, data=(('weight',float),), create_using=nx.DiGraph())
-        #G = nx.read_weighted_edgelist(args.input, nodetype=int, create_using=nx.DiGraph())
     else:
-        #G = nx.read_edgelist(args.input, nodetype=int, create_using=nx.DiGraph())
         G = nx.read_edgelist(args.input, nodetype=int, data=(('label', float),), create_using=nx.DiGraph())
-        for edge in G.edges():
-            G[edge[0]][edge[1]]['weight'] = 1
+
+        # Edge weight decides the probability of selection in the random walk
+        # Lower the weight, lower is the probability of selection
+        # If the followers (in degree) is high, we assign lower weight
+        if ignore_popular:
+            indegrees = dict(G.in_degree_iter())
+            for edge in G.edges():
+                followers = indegrees[edge[1]]
+                if (followers >= 400 and followers < 800):
+                    G[edge[0]][edge[1]]['weight'] = 0.7
+                elif (followers >= 800 and followers < 2000):
+                    G[edge[0]][edge[1]]['weight'] = 0.5
+                elif (followers >= 2000):
+                    G[edge[0]][edge[1]]['weight'] = 0.2
+                else:
+                    G[edge[0]][edge[1]]['weight'] = 1
+        else:
+            for edge in G.edges():
+                G[edge[0]][edge[1]]['weight'] = 1
 
     if not args.directed:
         G = G.to_undirected()
@@ -85,7 +101,7 @@ def main(args):
     Pipeline for representational learning for all nodes in a graph.
     '''
     print("Reading graph...")
-    nx_G = read_graph()
+    nx_G = read_graph(args.ignore_popular)
     print("Reading COMPLETED.\n")
     print("Initializing graph object")
     G = node2vec.Graph(nx_G, args.directed, args.p, args.q)
