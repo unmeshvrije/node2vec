@@ -9,6 +9,8 @@ import argparse
 #valid_subs
 #test_subs
 #
+NUM_BITS_FOR_RELATIONS = 5
+
 
 def main(datafile, spo, pagerankMap, one_relation, one_domain):
     index_of_subject = 0
@@ -49,11 +51,12 @@ def main(datafile, spo, pagerankMap, one_relation, one_domain):
         valid = "u'valid_subs':["
 
         counter = 0
-        identifier = 0
+        identifier = 1
         relationId = 0
 
         shuffle(lines)
 
+        fwalks = open(datafile + '.combined-relation-entity.edgelist', 'w')
         for index, pair in enumerate(lines):
             counter += 1
             if len(pair.split()) < 2:
@@ -62,42 +65,48 @@ def main(datafile, spo, pagerankMap, one_relation, one_domain):
             parts = pair.split()
             fromNode = parts[index_of_subject]
             toNode = parts[index_of_object]
-            if (len(parts) > 2) and not one_relation:
-                edgeLabel = parts[index_of_predicate]
-                if edgeLabel not in relations_set:
-                    relations_set.add(edgeLabel)
-                    if one_domain:
-                        relations_map[edgeLabel] = identifier
-                        identifier += 1
-                    else:
-                        relations_map[edgeLabel] = relationId
-                        relationId +=1
 
             if fromNode not in entities_set:
                 entities_set.add(fromNode)
                 if pagerank:
                     if fromNode in pagerankMap:
-                        entities_map[fromNode] = identifier
-                        id_to_pagerank_map[identifier] = pagerankMap[fromNode]
+                        entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
+                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = pagerankMap[fromNode]
                     else:
-                        entities_map[fromNode] = identifier
-                        id_to_pagerank_map[identifier] = 0.0
+                        entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
+                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = 0.0
                 else:
-                    entities_map[fromNode] = identifier
+                    entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
                 identifier += 1
 
             if toNode not in entities_set:
                 entities_set.add(toNode)
                 if pagerank:
                     if toNode in pagerankMap:
-                        entities_map[toNode] = identifier
-                        id_to_pagerank_map[identifier] = pagerankMap[toNode]
+                        entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
+                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = pagerankMap[toNode]
                     else:
-                        entities_map[toNode] = identifier
-                        id_to_pagerank_map[identifier] = 0.0
+                        entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
+                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = 0.0
                 else:
-                    entities_map[toNode] = identifier
+                    entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
                 identifier += 1
+
+            if (len(parts) > 2) and not one_relation:
+                edgeLabel = parts[index_of_predicate]
+                if edgeLabel not in relations_set:
+                    relations_set.add(edgeLabel)
+                    relations_map[edgeLabel] = relationId
+                    relationId +=1
+                    if relationId >= 32:
+                        print("No more than 31 relations allowed")
+                        sys.exit()
+                # Here we make two pairs from the triple
+                ER = entities_map[fromNode] & relations_map[edgeLabel]
+                RE = entities_map[toNode] & relations_map[edgeLabel] | (1 << NUM_BITS_FOR_RELATIONS)
+
+                fwalks.write(str(ER) + " " + str(entities_map[toNode]) + "\n")
+                fwalks.write(str(entities_map[fromNode]) + " " + str(RE) + "\n")
 
         reverse_entities_map = dict(zip(entities_map.values(), entities_map.keys()))
         reverse_relations_map = dict(zip(relations_map.values(), relations_map.keys()))
