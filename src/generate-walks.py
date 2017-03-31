@@ -45,6 +45,10 @@ def parse_args():
     parser.add_argument('--unweighted', dest='unweighted', action='store_false')
     parser.set_defaults(weighted=False)
 
+    parser.add_argument('--labelled', dest='labelled', action='store_true', help='Boolean specifying (un)labelled. Default is unlabelled.')
+    parser.add_argument('--unlabelled', dest='unlabelled', action='store_false')
+    parser.set_defaults(labelled=False)
+
     parser.add_argument('--directed', dest='directed', action='store_true',help='Graph is (un)directed. Default is undirected.')
     parser.add_argument('--undirected', dest='undirected', action='store_false')
     parser.set_defaults(directed=False)
@@ -58,8 +62,10 @@ def read_graph(ignore_popular):
     '''
     if args.weighted:
         G = nx.read_edgelist(args.input, nodetype=int, data=(('weight',float),), create_using=nx.DiGraph())
-    else:
+    elif args.labelled:
         G = nx.read_edgelist(args.input, nodetype=int, data=(('label', float),), create_using=nx.DiGraph())
+    else:
+        G = nx.read_edgelist(args.input, nodetype=int, create_using=nx.DiGraph())
 
         # Edge weight decides the probability of selection in the random walk
         # Lower the weight, lower is the probability of selection
@@ -110,7 +116,7 @@ def main(args):
     G.preprocess_transition_probs()
     print ("Transition probabilities computation COMPLETED")
     print ("Simulating walks...")
-    walks = G.simulate_walks(args.num_walks, args.walk_length)
+    walks = G.simulate_walks(args.num_walks, args.walk_length, args.labelled)
     print ("Walk simulation COMPLETED\n")
     print ("Learning embeddings...\n")
     learn_embeddings(walks)

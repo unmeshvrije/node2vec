@@ -10,19 +10,16 @@ import argparse
 #test_subs
 #
 NUM_BITS_FOR_RELATIONS = 5
+DIRECTION_BIT_MASK = (1 << NUM_BITS_FOR_RELATIONS) # Bit 6
+COMBINATION_BIT_MASK = (1 << NUM_BITS_FOR_RELATIONS +1) # Bit 7
 
-
-def main(datafile, spo, pagerankMap, one_relation, one_domain):
+def main(datafile, spo, one_relation, one_domain):
     index_of_subject = 0
     index_of_object = 1
     index_of_predicate = 2
     if spo:
         index_of_object = 2
         index_of_predicate = 1
-
-    pagerank = False
-    if len(pagerankMap) != 0:
-        pagerank = True
 
     with open(datafile, 'r') as f:
         lines = f.readlines()
@@ -41,8 +38,9 @@ def main(datafile, spo, pagerankMap, one_relation, one_domain):
 
         entities_set = set()
         relations_set = set()
+        edgelist_nodes_set = set()
         entities_map = {}
-        id_to_pagerank_map = {}
+        edgelist_map = {}
         relations_map = {}
         entities = "u'entities': ["
         relations = "u'relations':["
@@ -53,6 +51,7 @@ def main(datafile, spo, pagerankMap, one_relation, one_domain):
         counter = 0
         identifier = 1
         relationId = 0
+        edgelistId = 0
 
         shuffle(lines)
 
@@ -68,28 +67,12 @@ def main(datafile, spo, pagerankMap, one_relation, one_domain):
 
             if fromNode not in entities_set:
                 entities_set.add(fromNode)
-                if pagerank:
-                    if fromNode in pagerankMap:
-                        entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
-                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = pagerankMap[fromNode]
-                    else:
-                        entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
-                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = 0.0
-                else:
-                    entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
+                entities_map[fromNode] = (identifier << NUM_BITS_FOR_RELATIONS+2)
                 identifier += 1
 
             if toNode not in entities_set:
                 entities_set.add(toNode)
-                if pagerank:
-                    if toNode in pagerankMap:
-                        entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
-                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = pagerankMap[toNode]
-                    else:
-                        entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
-                        id_to_pagerank_map[identifier<<NUM_BITS_FOR_RELATIONS+1] = 0.0
-                else:
-                    entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+1)
+                entities_map[toNode] = (identifier << NUM_BITS_FOR_RELATIONS+2)
                 identifier += 1
 
             if (len(parts) > 2) and not one_relation:
@@ -102,23 +85,43 @@ def main(datafile, spo, pagerankMap, one_relation, one_domain):
                         print("No more than 31 relations allowed")
                         sys.exit()
                 # Here we make two pairs from the triple
-                ER = entities_map[fromNode] & relations_map[edgeLabel]
-                RE = entities_map[toNode] & relations_map[edgeLabel] | (1 << NUM_BITS_FOR_RELATIONS)
+                ER = entities_map[fromNode] | relations_map[edgeLabel] | COMBINATION_BIT_MASK
+                RE = entities_map[toNode] | relations_map[edgeLabel] | COMBINATION_BIT_MASK | DIRECTION_BIT_MASK
 
-                fwalks.write(str(ER) + " " + str(entities_map[toNode]) + "\n")
-                fwalks.write(str(entities_map[fromNode]) + " " + str(RE) + "\n")
+                # Edge list must contains ids from 0, otherwise word2vec does not work on random walks that contain non-0-based ids
+                if entities_map[fromNode] not in edgelist_nodes_set:
+                    edgelist_nodes_set.add(entities_map[fromNode])
+                    edgelist_map[entities_map[fromNode]] = edgelistId
+                    edgelistId += 1
+                if entities_map[toNode] not in edgelist_nodes_set:
+                    edgelist_nodes_set.add(entities_map[toNode])
+                    edgelist_map[entities_map[toNode]] = edgelistId
+                    edgelistId += 1
+                if ER not in edgelist_nodes_set:
+                    edgelist_nodes_set.add(ER)
+                    edgelist_map[ER] = edgelistId
+                    edgelistId += 1
+                if RE not in edgelist_nodes_set:
+                    edgelist_nodes_set.add(RE)
+                    edgelist_map[RE] = edgelistId
+                    edgelistId += 1
+
+                fwalks.write(str(edgelist_map[ER]) + " " + str(edgelist_map[entities_map[toNode]]) + "\n")
+                fwalks.write(str(edgelist_map[entities_map[fromNode]]) + " " + str(edgelist_map[RE]) + "\n")
 
         reverse_entities_map = dict(zip(entities_map.values(), entities_map.keys()))
         reverse_relations_map = dict(zip(relations_map.values(), relations_map.keys()))
+        reverse_edgelist_map = dict(zip(edgelist_map.values(), edgelist_map.keys()))
         with open(datafile + '.entity.map', 'w') as fen:
             fen.write(str(reverse_entities_map))
         with open(datafile + '.relations.map', 'w') as frel:
             frel.write(str(reverse_relations_map))
-        with open(datafile + '.pagerank.map', 'w') as fen:
-            fen.write(str(id_to_pagerank_map))
+        with open(datafile + '.edgelist.map', 'w') as fen:
+            fen.write(str(reverse_edgelist_map))
 
+        print ("# of edgelist nodes = %d\n" % (len(reverse_edgelist_map)) )
         fwalks = open(datafile + '.0-based-entitiy-ids.edgelist', 'w')
-        print ("# of identifiers (entities) = %d" % (identifier))
+        print ("# of identifiers (entities) = %d\n" % (identifier))
         for index, pair in enumerate(lines):
             parts = pair.split()
             fromNode = parts[index_of_subject]
@@ -162,17 +165,8 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(prog="SNAP to Python Object format converter", conflict_handler='resolve')
     parser.add_argument('--fin', type=str, help = 'Path to the input file in SNAP (edgelist) format')
     parser.add_argument('--spo', action='store_const', const=True, default=False, help = 'If the input file contains Subject-Predicate-Object format then use this option. Default is Subject-Object-Predicate')
-    parser.add_argument('--pagerank', type=str, help = 'Path of the pagerank file mapping')
     parser.add_argument('--one-relation', action='store_const', const=True, default=False, help = 'If you want to exclude relation labels, use this option')
     parser.add_argument('--one-domain', action='store_const', const=True, default=False, help = 'If you want the same ID space (domain) for entities and relations, use this option')
     args = parser.parse_args()
-    pagerankMap = {}
-    if args.pagerank:
-        pagerankMapFile = args.pagerank
-        with open(pagerankMapFile, 'r') as fin:
-            lines = fin.readlines()
-            for line in lines:
-                entity, pagerank = line.split()
-                pagerankMap[entity] = pagerank
 
-    main(args.fin, args.spo, pagerankMap, args.one_relation, args.one_domain)
+    main(args.fin, args.spo, args.one_relation, args.one_domain)

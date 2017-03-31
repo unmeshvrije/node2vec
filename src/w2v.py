@@ -195,9 +195,14 @@ parser.add_argument('--fin', type=str, help = "Embeddings in the python object t
 parser.add_argument('--fdb', type=str, help = "Pickle database")
 parser.add_argument('--topk', type=int, default=10, help = "TOPK value for evaluation")
 parser.add_argument('--dim', type=int, default=50, help = "Number of dimensions")
-parser.add_argument('--compute-fs', dest='compute_fs', help = "Evaluation method", action='store_true', default=False)
+parser.add_argument('--compute-fs', dest='compute_fs', help = "Compute fitness score or not", action='store_true', default=False)
+parser.add_argument('--combined-ids', dest='combined_ids', help = "Ids of entities and relations are combined or not", action='store_true', default=False)
+parser.add_argument('--fidmap', type=str, help = "If the mapping of ids is given or not")
 parser.add_argument('--dev', type=str, help = "Whether to run on CPU or GPU", default='gpu')
 
+NUM_BITS_FOR_RELATIONS = 5
+DIRECTION_BIT_MASK = (1 << NUM_BITS_FOR_RELATIONS) # Bit 6
+COMBINATION_BIT_MASK = (1 << NUM_BITS_FOR_RELATIONS +1) # Bit 7
 
 args = parser.parse_args()
 begin = timeit.default_timer()
@@ -208,6 +213,15 @@ topk = args.topk
 picklefile = args.fdb # Pickle database containing same IDs as that of the random walks file
 dev = args.dev
 compute_fs = args.compute_fs
+combined_ids = args.combined_ids
+edgelist_map = {}
+reverse_edgelist_map = {}
+if args.fidmap:
+    edgelist_map_file = args.fidmap
+    with open(edgelist_map_file, 'rb') as fin:
+        reverse_edgelist_map = eval(fin.read())
+    edgelist_map = dict(zip(reverse_edgelist_map.values(), reverse_edgelist_map.keys()))
+
 n = len(voc) #+ 1
 
 data, count, dictionary, reverse_dictionary = build_dataset(voc)
@@ -229,14 +243,28 @@ valid_window = 1000 # Pick the samples from first 1000 identifiers for entities 
 testHeads = []
 testTails = []
 testPreds = []
+testHeadPreds = []
+testTailPreds = []
 kbRecords = processPickleFile(picklefile)
 train = kbRecords['train_subs']
 test = kbRecords['test_subs']
 test_data_size = len(test)
 for t in test:
-    testHeads.append(t[0])
-    testTails.append(t[1])
+    testHeads.append(edgelist_map[t[0]])
+    testTails.append(edgelist_map[t[1]])
     testPreds.append(t[2])
+    if combined_ids:
+        # Predicate IDs are not present in the dataset created from combined IDs
+        # We have to binary OR "entity + relation" to find ID that is present in w2v walks
+        if t[0] | t[2] | COMBINATION_BIT_MASK in edgelist_map:
+            testHeadPreds.append(edgelist_map[t[0] | t[2] | COMBINATION_BIT_MASK])
+        if t[0] | t[2] | COMBINATION_BIT_MASK | DIRECTION_BIT_MASK in edgelist_map:
+            testTailPreds.append(edgelist_map[t[0] | t[2] | COMBINATION_BIT_MASK | DIRECTION_BIT_MASK])
+
+        if t[1] | t[2] | COMBINATION_BIT_MASK in edgelist_map:
+            testHeadPreds.append(edgelist_map[t[1] | t[2] | COMBINATION_BIT_MASK])
+        if t[1] | t[2] | COMBINATION_BIT_MASK | DIRECTION_BIT_MASK in edgelist_map:
+            testTailPreds.append(edgelist_map[t[1] | t[2] | COMBINATION_BIT_MASK | DIRECTION_BIT_MASK])
 
 G = nx.DiGraph()
 for t in train:
@@ -256,6 +284,8 @@ valid_examples = np.random.choice(valid_window, valid_size, replace=False)
 batch_heads = np.array(testHeads)
 batch_tails = np.array(testTails)
 batch_preds = np.array(testPreds)
+batch_head_preds = np.array(testHeadPreds)
+batch_tail_preds = np.array(testTailPreds)
 
 flog = open(logfile, 'w')
 graph = tf.Graph()
@@ -280,6 +310,8 @@ with graph.as_default():
     test_dataset_heads = tf.constant(batch_heads, dtype=tf.int32)
     test_dataset_tails = tf.constant(batch_tails, dtype=tf.int32)
     test_dataset_preds = tf.constant(batch_preds, dtype=tf.int32)
+    test_dataset_head_preds = tf.constant(batch_head_preds, dtype=tf.int32)
+    test_dataset_tail_preds = tf.constant(batch_tail_preds, dtype=tf.int32)
     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
     # Loss function
@@ -301,12 +333,18 @@ with graph.as_default():
     tail_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_tails)
     tail_similarity = tf.matmul(tail_embeddings, normalized_embeddings, transpose_b = True)
 
-    pred_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_preds)
-    pred_similarity = tf.matmul(pred_embeddings, normalized_embeddings, transpose_b = True)
+    if combined_ids:
+        head_pred_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_head_preds)
+        head_pred_similarity = tf.matmul(head_pred_embeddings, normalized_embeddings, transpose_b = True)
+        tail_pred_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_tail_preds)
+        tail_pred_similarity = tf.matmul(tail_pred_embeddings, normalized_embeddings, transpose_b = True)
+    else:
+        pred_embeddings = tf.nn.embedding_lookup(normalized_embeddings, test_dataset_preds)
+        pred_similarity = tf.matmul(pred_embeddings, normalized_embeddings, transpose_b = True)
 
     # Step 5: Begin training.
     #num_steps = 100001
-    num_steps = n
+    num_steps = min(n, 2000)
     if (n == 0):
         print ("Empty vocabulary.")
         sys.exit()
@@ -359,7 +397,11 @@ with graph.as_default():
                 #sim = similarity.eval()
                 sim_head = head_similarity.eval()
                 sim_tail = tail_similarity.eval()
-                sim_pred = pred_similarity.eval()
+                if combined_ids:
+                    sim_head_pred = head_pred_similarity.eval()
+                    sim_tail_pred = tail_pred_similarity.eval()
+                else:
+                    sim_pred = pred_similarity.eval()
                 # for i in xrange(valid_size):
                 #     valid_word = reverse_dictionary[valid_examples[i]]
                 #     top_k = 8
@@ -382,6 +424,7 @@ with graph.as_default():
                 fs_head_prediction_hits = 0
                 fs_tail_prediction_ranks = []
                 fs_head_prediction_ranks = []
+                ENTITY_MASK = int(math.pow(2,26)-1)<< 7
                 for i in xrange(test_data_size):
                     # Tail prediction for triple
                     #     head   ,   tail    , predicate >
@@ -391,29 +434,63 @@ with graph.as_default():
                     pred = test[i][2]
                     log_str = "Itr# %d\n" % i
                     print (log_str)
-                    nearest_tail_for_head = argsort(sim_head[i])[::-1]
-                    tail_prediction_rank_entity = np.where(nearest_tail_for_head == tail)[0][0]
-                    tail_prediction_entity_ranks.append(tail_prediction_rank_entity)
 
-                    nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
-                    tail_prediction_rank_relation = np.where(nearest_entity_for_relation == tail)[0][0]
-                    tail_prediction_relation_ranks.append(tail_prediction_rank_relation)
+                    if combined_ids:
+                        # For tail prediction, we should check only the records where 5th bit is SET or records that are just entities
+                        # because 5th bit indicates that the ID is of the type RE (Relation followed by Entity)
+                        nearest_tail_for_head = argsort(sim_head[i])[::-1]
+                        # We need the edgelist map here.
+                        tail_prediction_rank_entity = np.where(nearest_tail_for_head == edgelist_map[tail])[0][0]
+                        tail_prediction_entity_ranks.append(tail_prediction_rank_entity)
 
-                    if tail_prediction_rank_entity < topk or tail_prediction_rank_relation < topk:
-                        tail_prediction_hits += 1
+                        nearest_entity_for_relation = argsort(sim_tail_pred[i])[::-1]
+                        for index, n in enumerate(nearest_entity_for_relation):
+                            if reverse_edgelist_map[n] & ENTITY_MASK == tail:
+                                tail_prediction_rank_relation = index
+                                break
+                        tail_prediction_relation_ranks.append(tail_prediction_rank_relation)
 
-                    # Head prediction for triple
-                    # target word is the tail and we will predict the possible head
-                    nearest_head_for_tail = argsort(sim_tail[i])[::-1]
-                    head_prediction_rank_entity = np.where(nearest_head_for_tail == head)[0][0]
-                    head_prediction_entity_ranks.append(head_prediction_rank_entity)
+                        if tail_prediction_rank_entity < topk or tail_prediction_rank_relation < topk:
+                            tail_prediction_hits += 1
 
-                    #nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
-                    head_prediction_rank_relation = np.where(nearest_entity_for_relation == head)[0][0]
-                    head_prediction_relation_ranks.append(head_prediction_rank_relation)
+                        # Head predictions
+                        nearest_head_for_tail = argsort(sim_tail[i])[::-1]
+                        head_prediction_rank_entity = np.where(nearest_head_for_tail == edgelist_map[head])[0][0]
+                        head_prediction_entity_ranks.append(head_prediction_rank_entity)
 
-                    if head_prediction_rank_entity < topk or head_prediction_rank_relation < topk:
-                        head_prediction_hits += 1
+                        nearest_entity_for_relation = argsort(sim_head_pred[i])[::-1]
+                        for index,n in enumerate(nearest_entity_for_relation):
+                            if reverse_edgelist_map[n] & ENTITY_MASK == head:
+                                head_prediction_rank_relation = index
+                                break
+                        head_prediction_relation_ranks.append(head_prediction_rank_relation)
+
+                        if head_prediction_rank_entity < topk or head_prediction_rank_relation < topk:
+                            head_prediction_hits += 1
+                    else:
+                        nearest_tail_for_head = argsort(sim_head[i])[::-1]
+                        tail_prediction_rank_entity = np.where(nearest_tail_for_head == tail)[0][0]
+                        tail_prediction_entity_ranks.append(tail_prediction_rank_entity)
+
+                        nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
+                        tail_prediction_rank_relation = np.where(nearest_entity_for_relation == tail)[0][0]
+                        tail_prediction_relation_ranks.append(tail_prediction_rank_relation)
+
+                        if tail_prediction_rank_entity < topk or tail_prediction_rank_relation < topk:
+                            tail_prediction_hits += 1
+
+                        # Head prediction for triple
+                        # target word is the tail and we will predict the possible head
+                        nearest_head_for_tail = argsort(sim_tail[i])[::-1]
+                        head_prediction_rank_entity = np.where(nearest_head_for_tail == head)[0][0]
+                        head_prediction_entity_ranks.append(head_prediction_rank_entity)
+
+                        #nearest_entity_for_relation = argsort(sim_pred[i])[::-1]
+                        head_prediction_rank_relation = np.where(nearest_entity_for_relation == head)[0][0]
+                        head_prediction_relation_ranks.append(head_prediction_rank_relation)
+
+                        if head_prediction_rank_entity < topk or head_prediction_rank_relation < topk:
+                            head_prediction_hits += 1
 
                     if compute_fs:
                         print ("Computing fitness scores...\n")

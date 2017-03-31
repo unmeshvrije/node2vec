@@ -10,7 +10,7 @@ class Graph():
         self.p = p
         self.q = q
 
-    def node2vec_walk(self, walk_length, start_node):
+    def node2vec_walk(self, walk_length, start_node, labelled):
         '''
         Simulate a random walk starting from start node.
         '''
@@ -27,23 +27,27 @@ class Graph():
             if len(cur_nbrs) > 0:
                 if len(walk) == 1:
                     next = cur_nbrs[alias_draw(alias_nodes[cur][0], alias_nodes[cur][1])]
-                    label = G.get_edge_data(cur, next)
-                    walk_edges.append(label['label'])
+                    if labelled:
+                        label = G.get_edge_data(cur, next)
+                        walk_edges.append(label['label'])
                     walk.append(next)
                 else:
                     prev = walk[-2]
                     next = cur_nbrs[alias_draw(alias_edges[(prev, cur)][0], alias_edges[(prev, cur)][1])]
-                    label = G.get_edge_data(cur, next)
-                    walk_edges.append(label['label'])
+                    if labelled:
+                        label = G.get_edge_data(cur, next)
+                        walk_edges.append(label['label'])
                     walk.append(next)
             else:
                 break
 
-        # combine the walk of nodes with edge weights in an alternating fastion
-        return list(sum(zip(walk, walk_edges+[0]), ())[:-1])
-        #return walk
+        if labelled:
+            # combine the walk of nodes with edge weights in an alternating fastion
+            return list(sum(zip(walk, walk_edges+[0]), ())[:-1])
 
-    def simulate_walks(self, num_walks, walk_length):
+        return walk
+
+    def simulate_walks(self, num_walks, walk_length, labelled):
         '''
         Repeatedly simulate random walks from each node.
         '''
@@ -55,7 +59,7 @@ class Graph():
             print (str(walk_iter+1), '/', str(num_walks))
             random.shuffle(nodes)
             for node in nodes:
-                walks.append(self.node2vec_walk(walk_length=walk_length, start_node=node))
+                walks.append(self.node2vec_walk(walk_length=walk_length, start_node=node, labelled=labelled))
 
         return walks
 
@@ -92,7 +96,6 @@ class Graph():
             unnormalized_probs = [G[node][nbr]['weight'] for nbr in sorted(G.neighbors(node))]
             norm_const = sum(unnormalized_probs)
             if norm_const == 0:
-                print ("divide by 0 is going to happen")
                 normalized_probs = [0] * len(unnormalized_probs)
             else:
                 normalized_probs =  [float(u_prob)/norm_const for u_prob in unnormalized_probs]
